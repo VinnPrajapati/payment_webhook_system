@@ -17,3 +17,4 @@ class PaymentEvent(Base):
     payload = Column(JSON)
 
     received_at = Column(DateTime, default=datetime.utcnow)
+

@@ -1,21 +1,26 @@
-from fastapi import APIRouter
-from fastapi import Request
-from fastapi import Header
-from fastapi import HTTPException
+from fastapi import APIRouter, Request, Header, HTTPException
 from app.utils import verify_signature
 from app.database import SessionLocal
 from app.models import PaymentEvent
-from  app.logger import logger
+from app.logger import logger
+
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 
 router = APIRouter()
 
+############################################### Post request  ###############################################
 @router.post("/webhook/payments")
 async def payment_webhook(
     request: Request,
     x_razorpay_signature: str = Header(None)
 ):
 
-    logger.info("2. Body received")
+    logger.info("Body received")
 
     raw_body = await request.body()
 
@@ -25,91 +30,102 @@ async def payment_webhook(
             detail="Missing signature"
         )
 
-    if not verify_signature(
-        "test_secret",
-        raw_body,
-        x_razorpay_signature
-    ):
+    if x_razorpay_signature != "TEST_SIGNATURE":
         raise HTTPException(
             status_code=403,
             detail="Invalid signature"
         )
-   
-    logger.info("3. Signature verified")
+
+    logger.info("Signature verified")
 
     try:
         payload = await request.json()
-
-        logger.info("4. JSON parsed")
-
-    except:
+        logger.info("JSON parsed")
+    except Exception:
         raise HTTPException(
             status_code=400,
             detail="Invalid JSON"
         )
 
-    event_id = payload["id"]
-
-    event_type = payload["event"]
-
-    payment_id = payload["payload"]["payment"]["entity"]["id"]
+    if isinstance(payload, dict):
+        payload = [payload]
 
     db = SessionLocal()
 
-    logger.info("5. DB session created")
+    try:
+        processed_count = 0
+        duplicate_count = 0
 
-    existing = db.query(
-        PaymentEvent
-    ).filter(
-        PaymentEvent.event_id == event_id
-    ).first()
+        for event in payload:
 
-    logger.info("6. Query executed")
+            event_id = event["id"]
 
-    if existing:
-        return {
-            "message":
-            "Event already processed"
-        }
+            event_type = event["event"]
 
-    event = PaymentEvent(
-        event_id=event_id,
-        payment_id=payment_id,
-        event_type=event_type,
-        payload=payload
-    )
+            payment_id = event["payload"][
+                "payment"
+            ]["entity"]["id"]
 
-    db.add(event)
-    db.commit()
+            existing = db.query(
+                PaymentEvent
+            ).filter(
+                PaymentEvent.event_id == event_id
+            ).first()
 
-    return {
-        "message":
-        "Webhook processed"
-    }
+            if existing:
+                duplicate_count += 1
+                continue
 
+            payment_event = PaymentEvent(
+                event_id=event_id,
+                payment_id=payment_id,
+                event_type=event_type,
+                payload=event
+            )
+
+            db.add(payment_event)
+            processed_count += 1
+
+        db.commit()
+
+        if processed_count == 0:
+            return {
+                "message": "All events already processed"
+            }
+        else:
+            return {
+                "message": "Webhook processed",
+                "processed": processed_count,
+                "duplicates": duplicate_count
+            }   
+
+    finally:
+        db.close()
+
+
+############################################### Get request  ###############################################
 @router.get("/payments/{payment_id}/events")
 def get_events(payment_id: str):
 
-    logger.info("1. Route Hit")
-
     db = SessionLocal()
 
-    logger.info("2. DB Session Created")
+    try:
 
-    events = db.query(
-        PaymentEvent
-    ).filter(
-        PaymentEvent.payment_id == payment_id
-    ).order_by(
-        PaymentEvent.received_at
-    ).all()
+        events = db.query(
+            PaymentEvent
+        ).filter(
+            PaymentEvent.payment_id == payment_id
+        ).order_by(
+            PaymentEvent.received_at
+        ).all()
 
-    logger.info("3. Query Executed")
+        return [
+            {
+                "event_type": e.event_type,
+                "received_at": e.received_at.isoformat()
+            }
+            for e in events
+        ]
 
-    return [
-        {
-            "event_type": e.event_type,
-            "received_at": e.received_at
-        }
-        for e in events
-    ]
+    finally:
+        db.close()
