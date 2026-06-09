@@ -25,16 +25,10 @@ async def payment_webhook(
     raw_body = await request.body()
 
     if not x_razorpay_signature:
-        raise HTTPException(
-            status_code=403,
-            detail="Missing signature"
-        )
+        raise HTTPException(status_code=403, detail="Missing signature")
 
     if x_razorpay_signature != "TEST_SIGNATURE":
-        raise HTTPException(
-            status_code=403,
-            detail="Invalid signature"
-        )
+        raise HTTPException(status_code=403, detail="Invalid signature")
 
     logger.info("Signature verified")
 
@@ -42,10 +36,7 @@ async def payment_webhook(
         payload = await request.json()
         logger.info("JSON parsed")
     except Exception:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid JSON"
-        )
+        raise HTTPException(status_code=400, detail="Invalid JSON")
 
     if isinstance(payload, dict):
         payload = [payload]
@@ -62,9 +53,7 @@ async def payment_webhook(
 
             event_type = event["event"]
 
-            payment_id = event["payload"][
-                "payment"
-            ]["entity"]["id"]
+            payment_id = event["payload"]["payment"]["entity"]["id"]
 
             existing = db.query(
                 PaymentEvent
@@ -106,6 +95,8 @@ async def payment_webhook(
 ############################################### Get request  ###############################################
 @router.get("/payments/{payment_id}/events")
 def get_events(payment_id: str):
+        
+    logger.info("request received for payment_id: %s", payment_id)
 
     db = SessionLocal()
 
